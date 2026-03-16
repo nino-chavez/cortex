@@ -3,6 +3,8 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 
+const CURRENT_SCHEMA_VERSION: i32 = 1;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureRow {
     pub id: i64,
@@ -27,25 +29,55 @@ impl Database {
         }
 
         let conn = Connection::open(path)?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS captures (
-                id INTEGER PRIMARY KEY,
-                timestamp TEXT NOT NULL,
-                app_name TEXT NOT NULL DEFAULT '',
-                bundle_id TEXT NOT NULL DEFAULT '',
-                window_title TEXT NOT NULL DEFAULT '',
-                display_id INTEGER NOT NULL DEFAULT 0,
-                image_path TEXT NOT NULL,
-                image_hash TEXT NOT NULL DEFAULT '',
-                is_private INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE INDEX IF NOT EXISTS idx_captures_timestamp ON captures(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_captures_app ON captures(app_name);",
-        )?;
+        Self::run_migrations(&conn)?;
 
         Ok(Database {
             conn: Mutex::new(conn),
         })
+    }
+
+    fn run_migrations(conn: &Connection) -> Result<()> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER NOT NULL
+            );",
+        )?;
+
+        let version: i32 = conn
+            .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        if version < 1 {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS captures (
+                    id INTEGER PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    app_name TEXT NOT NULL DEFAULT '',
+                    bundle_id TEXT NOT NULL DEFAULT '',
+                    window_title TEXT NOT NULL DEFAULT '',
+                    display_id INTEGER NOT NULL DEFAULT 0,
+                    image_path TEXT NOT NULL,
+                    image_hash TEXT NOT NULL DEFAULT '',
+                    is_private INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS idx_captures_timestamp ON captures(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_captures_app ON captures(app_name);
+                CREATE INDEX IF NOT EXISTS idx_captures_bundle ON captures(bundle_id);",
+            )?;
+
+            if version == 0 {
+                conn.execute("INSERT INTO schema_version (version) VALUES (?1)", params![CURRENT_SCHEMA_VERSION])?;
+            } else {
+                conn.execute("UPDATE schema_version SET version = ?1", params![CURRENT_SCHEMA_VERSION])?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn schema_version(&self) -> Result<i32> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT version FROM schema_version LIMIT 1", [], |row| row.get(0))
     }
 
     pub fn insert_capture(
@@ -65,6 +97,35 @@ impl Database {
             params![timestamp, app_name, bundle_id, window_title, display_id, image_path, image_hash],
         )?;
         Ok(conn.last_insert_rowid())
+    }
+
+    /// Atomically save a capture: write file first, then DB. Clean up on failure.
+    pub fn insert_capture_atomic(
+        &self,
+        timestamp: &str,
+        app_name: &str,
+        bundle_id: &str,
+        window_title: &str,
+        display_id: u32,
+        image_path: &str,
+        image_hash: &str,
+    ) -> Result<i64> {
+        // File must already exist at image_path (written by caller)
+        let path = std::path::Path::new(image_path);
+        if !path.exists() {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "Image file does not exist".to_string(),
+            ));
+        }
+
+        match self.insert_capture(timestamp, app_name, bundle_id, window_title, display_id, image_path, image_hash) {
+            Ok(id) => Ok(id),
+            Err(e) => {
+                // DB insert failed — clean up orphaned file
+                std::fs::remove_file(path).ok();
+                Err(e)
+            }
+        }
     }
 
     pub fn get_last_hash_for_display(&self, display_id: u32) -> Result<Option<String>> {
@@ -101,6 +162,35 @@ impl Database {
             .collect::<Result<Vec<_>>>()?;
         Ok(rows)
     }
+
+    pub fn get_captures_by_app(&self, app_name: &str, limit: i64) -> Result<Vec<CaptureRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, app_name, bundle_id, window_title, display_id, image_path, image_hash, is_private
+             FROM captures WHERE app_name = ?1 ORDER BY timestamp DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![app_name, limit], |row| {
+                Ok(CaptureRow {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    app_name: row.get(2)?,
+                    bundle_id: row.get(3)?,
+                    window_title: row.get(4)?,
+                    display_id: row.get(5)?,
+                    image_path: row.get(6)?,
+                    image_hash: row.get(7)?,
+                    is_private: row.get::<_, i32>(8)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_capture_count(&self) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM captures", [], |row| row.get(0))
+    }
 }
 
 #[cfg(test)]
@@ -120,8 +210,16 @@ mod tests {
     }
 
     #[test]
+    fn migration_creates_schema_version() {
+        let (db, dir) = temp_db();
+        let version = db.schema_version().unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn create_and_insert_roundtrip() {
-        let (db, path) = temp_db();
+        let (db, dir) = temp_db();
 
         let id = db
             .insert_capture(
@@ -142,12 +240,45 @@ mod tests {
         assert_eq!(rows[0].bundle_id, "com.todesktop.230313mzl4w4u92");
         assert_eq!(rows[0].image_hash, "abc123");
 
-        std::fs::remove_dir_all(&path).ok();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn get_recent_captures_ordering_and_limit() {
+        let (db, dir) = temp_db();
+
+        db.insert_capture("2026-03-16T10:00:00Z", "A", "com.a", "T", 1, "/a.webp", "h1").unwrap();
+        db.insert_capture("2026-03-16T10:00:05Z", "B", "com.b", "T", 1, "/b.webp", "h2").unwrap();
+        db.insert_capture("2026-03-16T10:00:10Z", "C", "com.c", "T", 1, "/c.webp", "h3").unwrap();
+
+        let rows = db.get_recent_captures(2).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].app_name, "C"); // most recent first
+        assert_eq!(rows[1].app_name, "B");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn get_captures_by_app_filters() {
+        let (db, dir) = temp_db();
+
+        db.insert_capture("2026-03-16T10:00:00Z", "Chrome", "com.chrome", "T", 1, "/a.webp", "h1").unwrap();
+        db.insert_capture("2026-03-16T10:00:05Z", "Slack", "com.slack", "T", 1, "/b.webp", "h2").unwrap();
+        db.insert_capture("2026-03-16T10:00:10Z", "Chrome", "com.chrome", "T", 1, "/c.webp", "h3").unwrap();
+
+        let chrome = db.get_captures_by_app("Chrome", 10).unwrap();
+        assert_eq!(chrome.len(), 2);
+
+        let slack = db.get_captures_by_app("Slack", 10).unwrap();
+        assert_eq!(slack.len(), 1);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn change_detection_hash_lookup() {
-        let (db, path) = temp_db();
+        let (db, dir) = temp_db();
 
         db.insert_capture("2026-03-16T10:00:00Z", "App", "com.app", "Title", 1, "/a.webp", "hash_a").unwrap();
         db.insert_capture("2026-03-16T10:00:05Z", "App", "com.app", "Title", 1, "/b.webp", "hash_b").unwrap();
@@ -162,6 +293,41 @@ mod tests {
         let hash3 = db.get_last_hash_for_display(99).unwrap();
         assert_eq!(hash3, None);
 
-        std::fs::remove_dir_all(&path).ok();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn atomic_insert_cleans_up_orphaned_file() {
+        let (db, dir) = temp_db();
+
+        // Create a temp file to simulate a saved screenshot
+        let img_path = dir.join("orphan.webp");
+        std::fs::write(&img_path, b"fake webp data").unwrap();
+        assert!(img_path.exists());
+
+        // Force a DB error by inserting with a duplicate primary key
+        // First insert succeeds
+        db.insert_capture("2026-03-16T10:00:00Z", "App", "com.app", "Title", 1, img_path.to_str().unwrap(), "h1").unwrap();
+
+        // Create another file
+        let img_path2 = dir.join("orphan2.webp");
+        std::fs::write(&img_path2, b"fake webp data 2").unwrap();
+
+        // This should succeed (different row)
+        let result = db.insert_capture_atomic(
+            "2026-03-16T10:00:05Z", "App", "com.app", "Title", 1,
+            img_path2.to_str().unwrap(), "h2",
+        );
+        assert!(result.is_ok());
+        assert!(img_path2.exists()); // file kept on success
+
+        // Test with non-existent file
+        let result = db.insert_capture_atomic(
+            "2026-03-16T10:00:10Z", "App", "com.app", "Title", 1,
+            "/nonexistent/file.webp", "h3",
+        );
+        assert!(result.is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -1,5 +1,6 @@
 mod accessibility;
 mod capture;
+mod permissions;
 mod storage;
 mod tray;
 
@@ -36,6 +37,21 @@ fn get_recent_captures(db: tauri::State<Arc<Database>>) -> Vec<storage::CaptureR
     db.get_recent_captures(20).unwrap_or_default()
 }
 
+#[tauri::command]
+fn check_permissions() -> permissions::PermissionStatus {
+    permissions::check_all()
+}
+
+#[tauri::command]
+fn set_capture_interval(state: tauri::State<SharedCaptureState>, seconds: u64) -> bool {
+    if !(1..=60).contains(&seconds) {
+        return false;
+    }
+    let mut state_lock = state.lock().unwrap();
+    state_lock.interval_secs = seconds;
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let db_path = cortex_data_dir().join("cortex.db");
@@ -55,6 +71,16 @@ pub fn run() {
                     )?;
                 }
 
+                // Check permissions on startup
+                let perm_status = permissions::check_all();
+                if !perm_status.screen_recording {
+                    log::warn!("Screen Recording permission not granted");
+                    permissions::request_screen_recording();
+                }
+                if !perm_status.accessibility {
+                    log::warn!("Accessibility permission not granted — window titles will be 'Unknown'");
+                }
+
                 tray::setup_tray(app.handle(), state, db)?;
 
                 Ok(())
@@ -67,6 +93,8 @@ pub fn run() {
             pause_capture,
             get_capture_status,
             get_recent_captures,
+            check_permissions,
+            set_capture_interval,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

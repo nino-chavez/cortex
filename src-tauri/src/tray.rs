@@ -1,9 +1,10 @@
 use crate::capture::{self, CaptureStatus, SharedCaptureState};
+use crate::permissions;
 use crate::storage::Database;
 use log::info;
 use std::sync::Arc;
 use tauri::{
-    menu::{Menu, MenuItem, MenuId},
+    menu::{Menu, MenuItem, MenuId, PredefinedMenuItem},
     tray::TrayIconBuilder,
     AppHandle, Manager,
 };
@@ -18,10 +19,12 @@ pub fn setup_tray(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let toggle = MenuItem::with_id(app, TOGGLE_ID, "Start Capture", true, None::<&str>)?;
     let status = MenuItem::with_id(app, STATUS_ID, "Status: Paused", false, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let perms = MenuItem::with_id(app, "permissions", "Grant Permissions...", true, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Open Cortex", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&toggle, &status, &open, &quit])?;
+    let menu = Menu::with_items(app, &[&toggle, &status, &separator, &perms, &open, &quit])?;
 
     let _tray = TrayIconBuilder::new()
         .menu(&menu)
@@ -40,12 +43,27 @@ pub fn setup_tray(
                         update_menu_item(app, STATUS_ID, "Status: Paused");
                         info!("Capture paused");
                     } else {
+                        // Check permissions before starting
+                        let perm_status = permissions::check_all();
+                        if !perm_status.screen_recording {
+                            permissions::request_screen_recording();
+                            update_menu_item(app, STATUS_ID, "Status: Screen Recording required");
+                            info!("Screen Recording permission not granted");
+                            return;
+                        }
+                        if !perm_status.accessibility {
+                            info!("Accessibility not granted — window titles will show as 'Unknown'");
+                        }
+
                         capture::request_start(&state);
                         capture::start_capture_loop(state.clone(), db.clone());
                         update_menu_item(app, TOGGLE_ID, "Pause Capture");
                         update_menu_item(app, STATUS_ID, "Status: Recording");
                         info!("Capture started");
                     }
+                }
+                "permissions" => {
+                    permissions::open_screen_recording_settings();
                 }
                 "open" => {
                     if let Some(window) = app.get_webview_window("main") {
