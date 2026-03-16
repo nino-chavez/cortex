@@ -38,6 +38,10 @@ objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplicat
 active-win-pos-rs = "0.10"
 block2 = "0.6"
 
+# Audio transcription
+whisper-rs = { version = "0.15", features = ["metal"] }
+hound = "3.5"
+
 # Swift bridge
 swift-rs = "1.0"
 

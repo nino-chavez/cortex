@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 
-const CURRENT_SCHEMA_VERSION: i32 = 2;
+const CURRENT_SCHEMA_VERSION: i32 = 3;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureRow {
@@ -85,6 +85,25 @@ impl Database {
             conn.execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_captures_ocr_status ON captures(ocr_status);
                  CREATE VIRTUAL TABLE IF NOT EXISTS captures_fts USING fts5(capture_id, ocr_text, tokenize='unicode61');"
+            )?;
+        }
+
+        if version < 3 {
+            // Migration v3: Audio transcription support
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS transcriptions (
+                    id INTEGER PRIMARY KEY,
+                    capture_id INTEGER,
+                    timestamp_start TEXT NOT NULL,
+                    timestamp_end TEXT NOT NULL,
+                    text TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT 'system',
+                    audio_path TEXT NOT NULL DEFAULT '',
+                    FOREIGN KEY (capture_id) REFERENCES captures(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_transcriptions_start ON transcriptions(timestamp_start);
+                CREATE INDEX IF NOT EXISTS idx_transcriptions_source ON transcriptions(source);
+                CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts USING fts5(transcription_id, text, tokenize='unicode61');"
             )?;
         }
 
@@ -208,6 +227,32 @@ impl Database {
             })?
             .collect::<Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    pub fn insert_transcription(
+        &self,
+        capture_id: Option<i64>,
+        timestamp_start: &str,
+        timestamp_end: &str,
+        text: &str,
+        source: &str,
+        audio_path: &str,
+    ) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO transcriptions (capture_id, timestamp_start, timestamp_end, text, source, audio_path)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![capture_id, timestamp_start, timestamp_end, text, source, audio_path],
+        )?;
+        let id = conn.last_insert_rowid();
+
+        // Also insert into FTS5
+        conn.execute(
+            "INSERT INTO transcriptions_fts (transcription_id, text) VALUES (?1, ?2)",
+            params![id, text],
+        )?;
+
+        Ok(id)
     }
 
     pub fn get_capture_count(&self) -> Result<i64> {

@@ -9,10 +9,11 @@ pub struct SearchResult {
     pub app_name: String,
     pub snippet: String,
     pub image_path: String,
+    pub result_type: String, // "ocr" or "transcription"
 }
 
 impl Database {
-    /// Full-text search across OCR'd captures. Returns results with snippets.
+    /// Full-text search across OCR'd captures and transcriptions. Returns unified results.
     pub fn search_captures(
         &self,
         query: &str,
@@ -22,34 +23,54 @@ impl Database {
     ) -> Result<Vec<SearchResult>> {
         let conn = self.conn.lock().unwrap();
 
-        let mut sql = String::from(
+        // Build OCR search query
+        let mut ocr_sql = String::from(
             "SELECT c.id, c.timestamp, c.app_name,
                     snippet(captures_fts, 1, '<b>', '</b>', '...', 32) as snippet,
-                    c.image_path
+                    c.image_path, 'ocr' as result_type
              FROM captures_fts fts
              JOIN captures c ON c.id = fts.capture_id
              WHERE captures_fts MATCH ?1"
         );
 
-        let mut param_count = 1;
         if app_filter.is_some() {
-            param_count += 1;
-            sql.push_str(&format!(" AND c.app_name = ?{}", param_count));
+            ocr_sql.push_str(" AND c.app_name = ?2");
         }
         if time_from.is_some() {
-            param_count += 1;
-            sql.push_str(&format!(" AND c.timestamp >= ?{}", param_count));
+            let idx = if app_filter.is_some() { 3 } else { 2 };
+            ocr_sql.push_str(&format!(" AND c.timestamp >= ?{}", idx));
         }
         if time_to.is_some() {
-            param_count += 1;
-            sql.push_str(&format!(" AND c.timestamp <= ?{}", param_count));
+            let idx = 2 + app_filter.is_some() as usize + time_from.is_some() as usize;
+            ocr_sql.push_str(&format!(" AND c.timestamp <= ?{}", idx + 1));
         }
 
-        sql.push_str(" ORDER BY c.timestamp DESC LIMIT 50");
+        // Build transcription search query with same param positions
+        let mut tx_sql = String::from(
+            "SELECT t.id, t.timestamp_start, t.source,
+                    snippet(transcriptions_fts, 1, '<b>', '</b>', '...', 32) as snippet,
+                    t.audio_path, 'transcription' as result_type
+             FROM transcriptions_fts tfts
+             JOIN transcriptions t ON t.id = tfts.transcription_id
+             WHERE transcriptions_fts MATCH ?1"
+        );
+
+        if time_from.is_some() {
+            let idx = if app_filter.is_some() { 3 } else { 2 };
+            tx_sql.push_str(&format!(" AND t.timestamp_start >= ?{}", idx));
+        }
+        if time_to.is_some() {
+            let idx = 2 + app_filter.is_some() as usize + time_from.is_some() as usize;
+            tx_sql.push_str(&format!(" AND t.timestamp_start <= ?{}", idx + 1));
+        }
+
+        let sql = format!(
+            "{} UNION ALL {} ORDER BY timestamp DESC LIMIT 50",
+            ocr_sql, tx_sql
+        );
 
         let mut stmt = conn.prepare(&sql)?;
 
-        // Build dynamic params
         let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(query.to_string())];
         if let Some(app) = app_filter {
             params_vec.push(Box::new(app.to_string()));
@@ -71,6 +92,7 @@ impl Database {
                     app_name: row.get(2)?,
                     snippet: row.get(3)?,
                     image_path: row.get(4)?,
+                    result_type: row.get(5)?,
                 })
             })?
             .collect::<Result<Vec<_>>>()?;
@@ -186,6 +208,7 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].capture_id, id);
         assert!(results[0].snippet.contains("E0308"));
+        assert_eq!(results[0].result_type, "ocr");
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -226,6 +249,56 @@ mod tests {
         let cursor_only = db.search_captures("error", Some("Cursor"), None, None).unwrap();
         assert_eq!(cursor_only.len(), 1);
         assert_eq!(cursor_only[0].app_name, "Cursor");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unified_search_returns_both_ocr_and_transcriptions() {
+        let (db, dir) = temp_db();
+
+        // OCR result
+        let id1 = db.insert_capture(
+            "2026-03-16T10:00:00Z", "Cursor", "com.cursor", "main.rs", 1, "/a.webp", "h1"
+        ).unwrap();
+        db.insert_fts(id1, "discussing the budget for Q3 planning").unwrap();
+
+        // Transcription result
+        db.insert_transcription(
+            Some(id1), "2026-03-16T10:00:05Z", "2026-03-16T10:00:35Z",
+            "we need to finalize the budget by Friday", "system", "/audio/chunk1.opus"
+        ).unwrap();
+
+        let results = db.search_captures("budget", None, None, None).unwrap();
+        assert_eq!(results.len(), 2);
+
+        let types: Vec<&str> = results.iter().map(|r| r.result_type.as_str()).collect();
+        assert!(types.contains(&"ocr"));
+        assert!(types.contains(&"transcription"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn transcription_search_with_source_label() {
+        let (db, dir) = temp_db();
+
+        db.insert_transcription(
+            None, "2026-03-16T10:00:00Z", "2026-03-16T10:00:30Z",
+            "hello this is a test from the microphone", "mic", "/audio/mic1.opus"
+        ).unwrap();
+        db.insert_transcription(
+            None, "2026-03-16T10:00:00Z", "2026-03-16T10:00:30Z",
+            "hello this is system audio test", "system", "/audio/sys1.opus"
+        ).unwrap();
+
+        let results = db.search_captures("hello", None, None, None).unwrap();
+        assert_eq!(results.len(), 2);
+
+        // app_name field carries the source for transcriptions
+        let sources: Vec<&str> = results.iter().map(|r| r.app_name.as_str()).collect();
+        assert!(sources.contains(&"mic"));
+        assert!(sources.contains(&"system"));
 
         std::fs::remove_dir_all(&dir).ok();
     }

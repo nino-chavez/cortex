@@ -1,4 +1,5 @@
 mod accessibility;
+mod audio;
 mod capture;
 mod ocr;
 mod ocr_worker;
