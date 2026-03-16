@@ -6,14 +6,15 @@ Local-first Mac app for continuous screen/audio capture with on-device AI search
 
 - **Desktop:** Tauri v2 (Rust backend, native WebView)
 - **Frontend:** SvelteKit (SPA mode) / Svelte 5 (runes) / TypeScript / Tailwind CSS v4
-- **Backend:** Rust
+- **Backend:** Rust (13 modules)
 - **OCR:** Apple Vision via swift-rs (`src-tauri/swift-lib/`)
 - **Transcription:** whisper-rs (whisper.cpp with Metal acceleration)
 - **Embeddings:** fastembed (all-MiniLM-L6-v2 via ONNX Runtime)
 - **Vector search:** sqlite-vec (SQLite extension)
 - **Full-text search:** SQLite FTS5
-- **LLM:** Ollama localhost API
+- **LLM:** Ollama localhost API (llama3.1)
 - **Database:** SQLite via rusqlite (single file at `~/.cortex/cortex.db`)
+- **Config:** TOML at `~/.cortex/config.toml`
 
 ## Commands
 
@@ -23,7 +24,7 @@ npm run dev -- --port 4173     # SvelteKit dev server
 npm run build                  # Build frontend to build/
 npx tauri dev                  # Run full Tauri app in dev mode
 npx tauri build                # Production build
-cargo test --manifest-path src-tauri/Cargo.toml --lib  # Run 25 tests
+cargo test --manifest-path src-tauri/Cargo.toml --lib  # Run 33 tests
 cargo check --manifest-path src-tauri/Cargo.toml       # Type check Rust
 ```
 
@@ -33,29 +34,34 @@ cargo check --manifest-path src-tauri/Cargo.toml       # Type check Rust
 - Node.js 18+ / npm
 - CMake (`brew install cmake`) — required by whisper-rs
 - Xcode Command Line Tools — required by swift-rs and screencapturekit
+- Ollama (`brew install ollama`) — for chat and summary features
 
 ## Project Structure
 
 ```
 src/                     # SvelteKit frontend (SPA mode, SSR disabled)
-  routes/                # Pages: /, /search, /timeline, /chat
+  routes/                # Pages: /, /search, /timeline, /chat, /settings
   lib/components/        # Svelte 5 components (search/, timeline/)
   app.css                # Tailwind CSS v4 entry
 
 src-tauri/               # Rust backend
   src/
-    lib.rs               # App entry, Tauri command registration, state management
+    lib.rs               # App entry, 22 Tauri commands, state management
     capture.rs           # ScreenCaptureKit capture loop + WebP encoding
     accessibility.rs     # NSWorkspace app/window metadata
-    storage.rs           # SQLite DB, schema migrations (v1-v4), all queries
+    storage.rs           # SQLite DB, 6 schema migrations (v1-v6), all queries
     ocr.rs               # Apple Vision FFI (swift-rs bridge)
-    ocr_worker.rs        # Background OCR processing with retry logic
+    ocr_worker.rs        # Background OCR processing with retry (3 attempts)
     audio.rs             # Whisper transcription, WAV save, audio worker
-    embedding.rs         # fastembed EmbeddingEngine wrapper
-    search.rs            # FTS5 + semantic search, unified UNION queries
-    chat.rs              # Ollama RAG pipeline, prompt construction
+    embedding.rs         # fastembed EmbeddingEngine wrapper (384-dim)
+    search.rs            # FTS5 + semantic search, unified UNION across OCR/transcriptions/clipboard
+    chat.rs              # Ollama RAG pipeline: embed query -> sqlite-vec -> prompt -> stream
+    meeting.rs           # Meeting mode: start/end, 2s interval, grouped captures
+    summary.rs           # AI summaries: by period, app, or topic via Ollama
+    clipboard.rs         # NSPasteboard watcher (1s poll), clipboard storage
+    config.rs            # TOML config, retention cleanup, storage stats
     permissions.rs       # macOS Screen Recording + Accessibility checks
-    tray.rs              # System tray: capture toggle, permissions, quit
+    tray.rs              # System tray: capture toggle, meeting toggle, permissions, quit
   swift-lib/             # Swift package for Vision OCR
     Package.swift
     Sources/SwiftLib/ocr.swift
@@ -64,7 +70,7 @@ src-tauri/               # Rust backend
 
 specchain/               # Spec-driven development (SpecChain)
   product/               # Mission, roadmap, tech stack
-  specs/                 # Feature specifications (10 specs)
+  specs/                 # 12 feature specifications with tasks
 ```
 
 ## Schema Migrations
@@ -77,27 +83,47 @@ Migrations run automatically on startup in `storage.rs`:
 | v2 | `captures_fts` (FTS5), `ocr_status`/`ocr_retries` columns on captures |
 | v3 | `transcriptions` table, `transcriptions_fts` (FTS5) |
 | v4 | `vec_captures`/`vec_transcriptions` (sqlite-vec), `embedding_status` column |
+| v5 | `meetings` table, `meeting_id` columns on captures/transcriptions |
+| v6 | `clipboard_entries`, `clipboard_fts` (FTS5) |
 
-## Tauri Commands (IPC)
-
-All backend functions exposed to the frontend:
+## Tauri Commands (22 total)
 
 | Command | Purpose |
 |---|---|
 | `start_capture` | Start the screen capture loop |
 | `pause_capture` | Pause capture |
-| `get_capture_status` | Current capture state (Recording/Paused/Error) |
+| `get_capture_status` | Current state (Recording/Paused/Error) |
 | `get_recent_captures` | Last 20 captures |
-| `search_captures` | FTS5 + semantic search with filters |
+| `search_captures` | FTS5 + semantic search with app/time filters |
 | `get_ocr_status` | Pending/completed/failed OCR counts |
 | `get_captures_for_day` | All captures for a date (timeline) |
 | `get_capture_by_id` | Single capture by ID |
 | `get_capture_ocr_text` | OCR text for a capture |
-| `get_distinct_apps` | Unique app names for filters |
-| `chat_message` | RAG chat via Ollama |
-| `check_ollama_status` | Ollama availability check |
+| `get_distinct_apps` | Unique app names for filter dropdowns |
+| `chat_message` | RAG chat via Ollama with citations |
+| `check_ollama_status` | Ollama availability + model check |
+| `start_meeting` | Begin meeting mode (2s interval, audio) |
+| `end_meeting` | End meeting, create record |
+| `list_meetings` | Recent meetings |
+| `summarize_period` | AI summary of a time range |
+| `summarize_app` | AI summary of activity in an app |
+| `summarize_topic` | AI summary of a topic via semantic search |
+| `get_clipboard_entries` | Recent clipboard history |
+| `get_settings` | Load CortexConfig from TOML |
+| `update_settings` | Save CortexConfig to TOML |
+| `get_storage_stats` | Disk usage breakdown |
+| `run_cleanup` | Execute retention cleanup |
 | `check_permissions` | Screen Recording + Accessibility status |
-| `set_capture_interval` | Change capture interval (1-60s) |
+| `set_capture_interval` | Change interval (1-60s) |
+
+## Background Workers
+
+| Worker | Trigger | Module |
+|---|---|---|
+| Capture loop | User clicks "Start" in tray | `capture.rs` |
+| OCR worker | Polls for `ocr_status = 'pending'` every 3s | `ocr_worker.rs` |
+| Audio worker | Polls `~/.cortex/audio/pending/` for WAV files | `audio.rs` |
+| Clipboard watcher | Polls NSPasteboard every 1s | `clipboard.rs` |
 
 ## Design Tokens (Signal X Dark)
 
@@ -105,6 +131,7 @@ All backend functions exposed to the frontend:
 |---|---|
 | Background | `#0A0A0A` |
 | Surface | `#141414` |
+| Elevated | `#1C1C1C` |
 | Border | `#262626` |
 | Text primary | `#FAFAFA` |
 | Text secondary | `#A3A3A3` |
@@ -118,3 +145,5 @@ All backend functions exposed to the frontend:
 - Descriptive, conventional-ish commit messages
 - Dev server on port 4173 (avoids conflict with other projects)
 - All data at `~/.cortex/`
+- Config at `~/.cortex/config.toml`
+- System fonts (`-apple-system`, San Francisco)
