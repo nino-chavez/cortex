@@ -17,6 +17,12 @@
 		>
 			Chat
 		</a>
+		<a
+			href="/settings"
+			class="rounded-lg border border-[#262626] bg-[#141414] px-6 py-3 text-sm font-medium text-[#A3A3A3] transition-colors hover:border-[#404040] hover:text-[#FAFAFA]"
+		>
+			Settings
+		</a>
 	</nav>
 
 	<p class="mt-6 text-xs text-[#525252]">Press Cmd+Shift+Space to search from anywhere</p>

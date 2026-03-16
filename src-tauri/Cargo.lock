@@ -901,6 +901,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-log",
+ "toml 0.8.2",
  "webp",
  "whisper-rs",
  "xxhash-rust",

@@ -3,6 +3,7 @@ mod audio;
 mod capture;
 mod chat;
 mod clipboard;
+mod config;
 mod embedding;
 mod meeting;
 mod ocr;
@@ -160,6 +161,29 @@ fn check_permissions() -> permissions::PermissionStatus {
 }
 
 #[tauri::command]
+fn get_settings() -> config::CortexConfig {
+    config::CortexConfig::load()
+}
+
+#[tauri::command]
+fn update_settings(settings: config::CortexConfig) -> Result<(), String> {
+    settings.save()
+}
+
+#[tauri::command]
+fn get_storage_stats(db: tauri::State<Arc<Database>>) -> config::StorageStats {
+    let mut stats = config::get_storage_stats();
+    stats.capture_count = db.get_capture_count().unwrap_or(0);
+    stats
+}
+
+#[tauri::command]
+fn run_cleanup() -> config::CleanupResult {
+    let cfg = config::CortexConfig::load();
+    config::run_cleanup(&cfg)
+}
+
+#[tauri::command]
 fn set_capture_interval(state: tauri::State<SharedCaptureState>, seconds: u64) -> bool {
     if !(1..=60).contains(&seconds) {
         return false;
@@ -261,6 +285,10 @@ pub fn run() {
             summarize_app,
             summarize_topic,
             get_clipboard_entries,
+            get_settings,
+            update_settings,
+            get_storage_stats,
+            run_cleanup,
             check_permissions,
             set_capture_interval,
         ])
