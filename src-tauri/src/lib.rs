@@ -162,6 +162,16 @@ fn check_permissions() -> permissions::PermissionStatus {
 }
 
 #[tauri::command]
+fn open_in_finder(path: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn get_settings() -> config::CortexConfig {
     config::CortexConfig::load()
 }
@@ -301,6 +311,7 @@ pub fn run() {
             summarize_app,
             summarize_topic,
             get_clipboard_entries,
+            open_in_finder,
             get_settings,
             update_settings,
             get_storage_stats,

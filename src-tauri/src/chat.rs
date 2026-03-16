@@ -87,9 +87,13 @@ pub fn check_ollama() -> OllamaStatus {
 /// Build a RAG prompt from retrieved context.
 fn build_rag_prompt(query: &str, contexts: &[Citation]) -> String {
     let mut prompt = String::from(
-        "You are Cortex, a local AI assistant that helps users recall information from their screen captures and audio transcriptions. \
-         Answer the user's question using ONLY the provided context. \
-         For every claim, cite the source using [Source: {timestamp} - {app_name}] format.\n\n\
+        "You are Cortex, a local AI assistant that helps users recall information from their screen captures and audio transcriptions.\n\n\
+         RULES:\n\
+         - Answer ONLY using the provided context below. Do NOT use general knowledge.\n\
+         - If the context does not contain enough information to answer, say \"I don't have enough captured data to answer that.\"\n\
+         - For every claim you make, cite the source using [Source: {timestamp} - {app_name}] format.\n\
+         - Do NOT fabricate or hallucinate sources. Only cite sources that appear in the context below.\n\
+         - Be concise and direct.\n\n\
          Context from user's capture history:\n\n",
     );
 

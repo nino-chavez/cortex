@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { convertFileSrc } from '@tauri-apps/api/core';
+
 	interface SearchResult {
 		capture_id: number;
 		timestamp: string;
@@ -8,7 +10,11 @@
 		result_type: string;
 	}
 
-	let { result, selected = false }: { result: SearchResult; selected?: boolean } = $props();
+	let {
+		result,
+		selected = false,
+		onclick
+	}: { result: SearchResult; selected?: boolean; onclick?: () => void } = $props();
 
 	function relativeTime(iso: string): string {
 		const now = Date.now();
@@ -24,15 +30,33 @@
 		if (minutes > 0) return `${minutes}m ago`;
 		return 'just now';
 	}
+
+	let thumbnailSrc = $derived(
+		result.image_path && result.result_type !== 'transcription'
+			? convertFileSrc(result.image_path)
+			: null
+	);
 </script>
 
 <button
+	{onclick}
 	class="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors {selected
 		? 'bg-[#1C1C1C]'
 		: 'hover:bg-[#141414]'}"
 >
-	<!-- Thumbnail placeholder -->
-	<div class="h-12 w-12 shrink-0 rounded-md bg-[#1C1C1C]"></div>
+	<!-- Thumbnail -->
+	{#if thumbnailSrc}
+		<img
+			src={thumbnailSrc}
+			alt=""
+			class="h-12 w-12 shrink-0 rounded-md object-cover"
+			loading="lazy"
+		/>
+	{:else}
+		<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-[#1C1C1C] text-lg text-[#525252]">
+			{result.result_type === 'transcription' ? '🎙' : '📷'}
+		</div>
+	{/if}
 
 	<!-- Content -->
 	<div class="min-w-0 flex-1">
