@@ -671,6 +671,7 @@ dependencies = [
  "screencapturekit",
  "serde",
  "serde_json",
+ "swift-rs",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",

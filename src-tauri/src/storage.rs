@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 
-const CURRENT_SCHEMA_VERSION: i32 = 1;
+const CURRENT_SCHEMA_VERSION: i32 = 2;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureRow {
@@ -19,7 +19,7 @@ pub struct CaptureRow {
 }
 
 pub struct Database {
-    conn: Mutex<Connection>,
+    pub(crate) conn: Mutex<Connection>,
 }
 
 impl Database {
@@ -65,11 +65,33 @@ impl Database {
                 CREATE INDEX IF NOT EXISTS idx_captures_bundle ON captures(bundle_id);",
             )?;
 
-            if version == 0 {
-                conn.execute("INSERT INTO schema_version (version) VALUES (?1)", params![CURRENT_SCHEMA_VERSION])?;
-            } else {
-                conn.execute("UPDATE schema_version SET version = ?1", params![CURRENT_SCHEMA_VERSION])?;
+        }
+
+        if version < 2 {
+            // Migration v2: OCR pipeline support
+            // Add ocr_status column (use execute for each since ALTER TABLE can't batch)
+            let has_ocr_status: bool = conn
+                .prepare("SELECT COUNT(*) FROM pragma_table_info('captures') WHERE name='ocr_status'")?
+                .query_row([], |row| row.get::<_, i64>(0))
+                .unwrap_or(0) > 0;
+
+            if !has_ocr_status {
+                conn.execute_batch(
+                    "ALTER TABLE captures ADD COLUMN ocr_status TEXT NOT NULL DEFAULT 'pending';"
+                )?;
             }
+
+            conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_captures_ocr_status ON captures(ocr_status);
+                 CREATE VIRTUAL TABLE IF NOT EXISTS captures_fts USING fts5(capture_id, ocr_text, tokenize='unicode61');"
+            )?;
+        }
+
+        // Update or insert schema version
+        if version == 0 {
+            conn.execute("INSERT INTO schema_version (version) VALUES (?1)", params![CURRENT_SCHEMA_VERSION])?;
+        } else if version < CURRENT_SCHEMA_VERSION {
+            conn.execute("UPDATE schema_version SET version = ?1", params![CURRENT_SCHEMA_VERSION])?;
         }
 
         Ok(())

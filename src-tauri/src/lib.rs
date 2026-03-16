@@ -1,6 +1,8 @@
 mod accessibility;
 mod capture;
+mod ocr;
 mod permissions;
+mod search;
 mod storage;
 mod tray;
 
@@ -35,6 +37,32 @@ fn get_capture_status(state: tauri::State<SharedCaptureState>) -> String {
 #[tauri::command]
 fn get_recent_captures(db: tauri::State<Arc<Database>>) -> Vec<storage::CaptureRow> {
     db.get_recent_captures(20).unwrap_or_default()
+}
+
+#[tauri::command]
+fn search_captures(
+    db: tauri::State<Arc<Database>>,
+    query: String,
+    app_filter: Option<String>,
+    time_from: Option<String>,
+    time_to: Option<String>,
+) -> Vec<search::SearchResult> {
+    db.search_captures(
+        &query,
+        app_filter.as_deref(),
+        time_from.as_deref(),
+        time_to.as_deref(),
+    )
+    .unwrap_or_default()
+}
+
+#[tauri::command]
+fn get_ocr_status(db: tauri::State<Arc<Database>>) -> search::OcrStatusCounts {
+    db.get_ocr_status_counts().unwrap_or(search::OcrStatusCounts {
+        pending: 0,
+        completed: 0,
+        failed: 0,
+    })
 }
 
 #[tauri::command]
@@ -93,6 +121,8 @@ pub fn run() {
             pause_capture,
             get_capture_status,
             get_recent_captures,
+            search_captures,
+            get_ocr_status,
             check_permissions,
             set_capture_interval,
         ])
