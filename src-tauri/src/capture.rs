@@ -137,6 +137,12 @@ fn process_frame(
 
     let app_info = accessibility::get_focused_app();
 
+    // Check excluded apps
+    let config = crate::config::CortexConfig::load();
+    if config.privacy.excluded_apps.contains(&app_info.bundle_id) {
+        return false; // Skip capture for excluded apps
+    }
+
     let (path, hash) = match save_screenshot(pixels, width, height, bytes_per_row, display_id) {
         Some(result) => result,
         None => {

@@ -5,6 +5,7 @@ mod chat;
 mod clipboard;
 mod config;
 mod embedding;
+mod embedding_worker;
 mod meeting;
 mod ocr;
 mod ocr_worker;
@@ -203,10 +204,13 @@ pub fn run() {
         embedding::EmbeddingEngine::new().expect("Failed to load embedding model"),
     );
 
+    let embed_engine_for_setup = embed_engine.clone();
+
     tauri::Builder::default()
         .setup({
             let state = capture_state.clone();
             let db = db.clone();
+            let embed_engine = embed_engine_for_setup;
             move |app| {
                 if cfg!(debug_assertions) {
                     app.handle().plugin(
@@ -247,6 +251,18 @@ pub fn run() {
 
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
                 app.handle().global_shortcut().register("CommandOrControl+Shift+Space")?;
+
+                // Start embedding worker (generates vectors for OCR'd captures)
+                let embed_stop = Arc::new(AtomicBool::new(false));
+                embedding_worker::start_embedding_worker(
+                    db.clone(),
+                    embed_engine.clone(),
+                    embed_stop,
+                );
+
+                // Start audio transcription worker (processes pending WAV files)
+                let audio_stop = Arc::new(AtomicBool::new(false));
+                audio::start_transcription_worker(db.clone(), audio_stop);
 
                 // Start clipboard watcher
                 let clipboard_stop = Arc::new(AtomicBool::new(false));

@@ -538,6 +538,15 @@ impl Database {
         Ok(rows)
     }
 
+    pub fn set_embedding_status(&self, capture_id: i64, status: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE captures SET embedding_status = ?1 WHERE id = ?2",
+            params![status, capture_id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_captures_in_range(&self, from: &str, to: &str) -> Result<Vec<CaptureRow>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
