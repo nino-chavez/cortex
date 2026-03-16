@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 
-const CURRENT_SCHEMA_VERSION: i32 = 4;
+const CURRENT_SCHEMA_VERSION: i32 = 6;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureRow {
@@ -136,6 +136,50 @@ impl Database {
                     transcription_id INTEGER PRIMARY KEY,
                     embedding float[384] distance_metric=cosine
                 );"
+            )?;
+        }
+
+        if version < 5 {
+            // Migration v5: Meeting memory
+            let has_meeting_id: bool = conn
+                .prepare("SELECT COUNT(*) FROM pragma_table_info('captures') WHERE name='meeting_id'")?
+                .query_row([], |row| row.get::<_, i64>(0))
+                .unwrap_or(0) > 0;
+
+            if !has_meeting_id {
+                conn.execute_batch(
+                    "ALTER TABLE captures ADD COLUMN meeting_id TEXT;"
+                ).ok();
+                conn.execute_batch(
+                    "ALTER TABLE transcriptions ADD COLUMN meeting_id TEXT;"
+                ).ok();
+            }
+
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS meetings (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL DEFAULT 'Untitled Meeting',
+                    start_time TEXT NOT NULL,
+                    end_time TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    participant_count INTEGER NOT NULL DEFAULT 1
+                );
+                CREATE INDEX IF NOT EXISTS idx_captures_meeting ON captures(meeting_id);
+                CREATE INDEX IF NOT EXISTS idx_transcriptions_meeting ON transcriptions(meeting_id);"
+            )?;
+        }
+
+        if version < 6 {
+            // Migration v6: Clipboard history
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS clipboard_entries (
+                    id INTEGER PRIMARY KEY,
+                    timestamp TEXT NOT NULL,
+                    content_type TEXT NOT NULL DEFAULT 'text',
+                    text_content TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_clipboard_timestamp ON clipboard_entries(timestamp);
+                CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5(entry_id, text_content, tokenize='unicode61');"
             )?;
         }
 
@@ -427,6 +471,116 @@ impl Database {
         let rows = stmt
             .query_map([], |row: &rusqlite::Row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn insert_meeting(
+        &self, id: &str, title: &str, start_time: &str, end_time: &str, summary: &str, participant_count: i32,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO meetings (id, title, start_time, end_time, summary, participant_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, title, start_time, end_time, summary, participant_count],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_meeting_summary(&self, id: &str, summary: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE meetings SET summary = ?1 WHERE id = ?2", params![summary, id])?;
+        Ok(())
+    }
+
+    pub fn get_meeting(&self, id: &str) -> Option<crate::meeting::MeetingRow> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, title, start_time, end_time, summary, participant_count FROM meetings WHERE id = ?1",
+            params![id],
+            |row: &rusqlite::Row| {
+                Ok(crate::meeting::MeetingRow {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    start_time: row.get(2)?,
+                    end_time: row.get(3)?,
+                    summary: row.get(4)?,
+                    participant_count: row.get(5)?,
+                })
+            },
+        ).ok()
+    }
+
+    pub fn list_meetings(&self, limit: i64) -> Result<Vec<crate::meeting::MeetingRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, start_time, end_time, summary, participant_count FROM meetings ORDER BY start_time DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit], |row: &rusqlite::Row| {
+            Ok(crate::meeting::MeetingRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                start_time: row.get(2)?,
+                end_time: row.get(3)?,
+                summary: row.get(4)?,
+                participant_count: row.get(5)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_meeting_transcriptions(&self, meeting_id: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT text FROM transcriptions WHERE meeting_id = ?1 ORDER BY timestamp_start ASC"
+        )?;
+        let rows = stmt.query_map(params![meeting_id], |row: &rusqlite::Row| {
+            row.get::<_, String>(0)
+        })?.collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_captures_in_range(&self, from: &str, to: &str) -> Result<Vec<CaptureRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, app_name, bundle_id, window_title, display_id, image_path, image_hash, is_private
+             FROM captures WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC"
+        )?;
+        let rows = stmt.query_map(params![from, to], |row: &rusqlite::Row| {
+            Ok(CaptureRow {
+                id: row.get(0)?, timestamp: row.get(1)?, app_name: row.get(2)?,
+                bundle_id: row.get(3)?, window_title: row.get(4)?, display_id: row.get(5)?,
+                image_path: row.get(6)?, image_hash: row.get(7)?, is_private: row.get::<_, i32>(8)? != 0,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn insert_clipboard_entry(&self, timestamp: &str, content_type: &str, text: &str) -> Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO clipboard_entries (timestamp, content_type, text_content) VALUES (?1, ?2, ?3)",
+            params![timestamp, content_type, text],
+        )?;
+        let id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO clipboard_fts (entry_id, text_content) VALUES (?1, ?2)",
+            params![id, text],
+        )?;
+        Ok(id)
+    }
+
+    pub fn get_clipboard_entries(&self, limit: i64) -> Result<Vec<crate::clipboard::ClipboardEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, content_type, text_content FROM clipboard_entries ORDER BY timestamp DESC LIMIT ?1"
+        )?;
+        let rows = stmt.query_map(params![limit], |row: &rusqlite::Row| {
+            Ok(crate::clipboard::ClipboardEntry {
+                id: row.get(0)?,
+                timestamp: row.get(1)?,
+                content_type: row.get(2)?,
+                text_content: row.get(3)?,
+            })
+        })?.collect::<Result<Vec<_>>>()?;
         Ok(rows)
     }
 

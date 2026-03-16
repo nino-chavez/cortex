@@ -2,12 +2,15 @@ mod accessibility;
 mod audio;
 mod capture;
 mod chat;
+mod clipboard;
 mod embedding;
+mod meeting;
 mod ocr;
 mod ocr_worker;
 mod permissions;
 mod search;
 mod storage;
+mod summary;
 mod tray;
 
 use capture::{CaptureState, SharedCaptureState};
@@ -101,8 +104,54 @@ fn chat_message(
 }
 
 #[tauri::command]
+fn start_meeting(
+    meeting_state: tauri::State<meeting::SharedMeetingState>,
+    capture_state: tauri::State<SharedCaptureState>,
+) -> String {
+    meeting::start_meeting(&meeting_state, &capture_state)
+}
+
+#[tauri::command]
+fn end_meeting(
+    meeting_state: tauri::State<meeting::SharedMeetingState>,
+    capture_state: tauri::State<SharedCaptureState>,
+    db: tauri::State<Arc<Database>>,
+) -> Result<meeting::MeetingRow, String> {
+    meeting::end_meeting(&meeting_state, &capture_state, &db)
+}
+
+#[tauri::command]
+fn list_meetings(db: tauri::State<Arc<Database>>, limit: i64) -> Vec<meeting::MeetingRow> {
+    db.list_meetings(limit).unwrap_or_default()
+}
+
+#[tauri::command]
 fn check_ollama_status() -> chat::OllamaStatus {
     chat::check_ollama()
+}
+
+#[tauri::command]
+fn summarize_period(db: tauri::State<Arc<Database>>, from: String, to: String) -> Result<summary::SummaryResponse, String> {
+    summary::summarize_period(&db, &from, &to)
+}
+
+#[tauri::command]
+fn summarize_app(db: tauri::State<Arc<Database>>, app_name: String, date: String) -> Result<summary::SummaryResponse, String> {
+    summary::summarize_app(&db, &app_name, &date)
+}
+
+#[tauri::command]
+fn summarize_topic(
+    db: tauri::State<Arc<Database>>,
+    engine: tauri::State<Arc<embedding::EmbeddingEngine>>,
+    topic: String,
+) -> Result<summary::SummaryResponse, String> {
+    summary::summarize_topic(&db, &engine, &topic)
+}
+
+#[tauri::command]
+fn get_clipboard_entries(db: tauri::State<Arc<Database>>, limit: i64) -> Vec<clipboard::ClipboardEntry> {
+    db.get_clipboard_entries(limit).unwrap_or_default()
 }
 
 #[tauri::command]
@@ -125,6 +174,7 @@ pub fn run() {
     let db_path = cortex_data_dir().join("cortex.db");
     let db = Arc::new(Database::open(&db_path).expect("Failed to open database"));
     let capture_state: SharedCaptureState = Arc::new(Mutex::new(CaptureState::new()));
+    let meeting_state: meeting::SharedMeetingState = Arc::new(Mutex::new(meeting::MeetingState::new()));
     let embed_engine = Arc::new(
         embedding::EmbeddingEngine::new().expect("Failed to load embedding model"),
     );
@@ -174,6 +224,10 @@ pub fn run() {
                 use tauri_plugin_global_shortcut::GlobalShortcutExt;
                 app.handle().global_shortcut().register("CommandOrControl+Shift+Space")?;
 
+                // Start clipboard watcher
+                let clipboard_stop = Arc::new(AtomicBool::new(false));
+                clipboard::start_clipboard_watcher(db.clone(), clipboard_stop);
+
                 // Start OCR background worker
                 let ocr_stop = Arc::new(AtomicBool::new(false));
                 ocr_worker::start_ocr_worker(db.clone(), ocr_stop);
@@ -186,6 +240,7 @@ pub fn run() {
         .manage(capture_state)
         .manage(db)
         .manage(embed_engine)
+        .manage(meeting_state)
         .invoke_handler(tauri::generate_handler![
             start_capture,
             pause_capture,
@@ -199,6 +254,13 @@ pub fn run() {
             get_distinct_apps,
             chat_message,
             check_ollama_status,
+            start_meeting,
+            end_meeting,
+            list_meetings,
+            summarize_period,
+            summarize_app,
+            summarize_topic,
+            get_clipboard_entries,
             check_permissions,
             set_capture_interval,
         ])
