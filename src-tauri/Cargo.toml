@@ -7,8 +7,6 @@ license = "MIT"
 edition = "2021"
 rust-version = "1.77.2"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [lib]
 name = "cortex_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -20,5 +18,26 @@ tauri-build = { version = "2.5.6" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.10.3" }
+tauri = { version = "2.10.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
+
+# Screen capture
+screencapturekit = "1"
+
+# Image encoding
+webp = "0.3"
+
+# SQLite
+rusqlite = { version = "0.36", features = ["bundled"] }
+
+# macOS APIs
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSNotification", "NSOperation"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplication"] }
+active-win-pos-rs = "0.10"
+block2 = "0.6"
+
+# Utilities
+chrono = "0.4"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+dirs = "6"
