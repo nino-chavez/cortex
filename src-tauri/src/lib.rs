@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use storage::Database;
+use tauri::Manager;
 
 fn cortex_data_dir() -> PathBuf {
     dirs::home_dir()
@@ -112,6 +113,28 @@ pub fn run() {
                 if !perm_status.accessibility {
                     log::warn!("Accessibility permission not granted — window titles will be 'Unknown'");
                 }
+
+                // Register global shortcut: Cmd+Shift+Space toggles search window
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(|app, _shortcut, event| {
+                            if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                                if let Some(window) = app.get_webview_window("search") {
+                                    let visible = window.is_visible().unwrap_or(false);
+                                    if visible {
+                                        window.hide().ok();
+                                    } else {
+                                        window.show().ok();
+                                        window.set_focus().ok();
+                                    }
+                                }
+                            }
+                        })
+                        .build(),
+                )?;
+
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                app.handle().global_shortcut().register("CommandOrControl+Shift+Space")?;
 
                 // Start OCR background worker
                 let ocr_stop = Arc::new(AtomicBool::new(false));
