@@ -1,0 +1,109 @@
+# {{PROJECT_NAME}}
+
+{{PROJECT_DESCRIPTION}}
+
+## Quick Start
+
+```bash
+{{CMD_INSTALL}}
+{{CMD_DEV}}
+```
+
+## Tech Stack
+
+| Layer          | Technology        |
+|----------------|-------------------|
+| Language       | {{LANGUAGE}}      |
+| Framework      | {{FRAMEWORK}}     |
+| Database       | —                 |
+| Styling        | —                 |
+| Infrastructure | —                 |
+
+## Project Structure
+
+```
+{{PROJECT_NAME}}/
+├── src/                    # Source code
+├── tests/                  # Test files
+├── docs/                   # Documentation
+├── specchain/              # SpecChain workflow
+│   ├── config.yml
+│   ├── specs/
+│   ├── standards/
+│   └── governance/
+└── .claude/
+    ├── commands/specchain/
+    └── agents/specchain/
+```
+
+## Key Directories
+
+| Directory       | Purpose                          |
+|-----------------|----------------------------------|
+| `src/`          | Application source code          |
+| `tests/`        | Test suites                      |
+| `specchain/`    | Spec-driven workflow system      |
+| `.claude/`      | Claude Code commands and agents  |
+
+## Exclusions
+
+These directories should be ignored during code analysis:
+
+- `node_modules/`
+- `.git/`
+- `dist/`
+- `build/`
+- `.svelte-kit/`
+- `.next/`
+- `coverage/`
+- `.vercel/`
+
+## Commands
+
+| Action     | Command            |
+|------------|--------------------|
+| Install    | `{{CMD_INSTALL}}`  |
+| Dev        | `{{CMD_DEV}}`      |
+| Build      | `{{CMD_BUILD}}`    |
+| Test       | `{{CMD_TEST}}`     |
+| Type Check | `{{CMD_TYPECHECK}}`|
+
+## Documentation Standards
+
+- Use Markdown for all documentation
+- Keep docs co-located with the code they describe
+- Name files in kebab-case
+- Include a "Last Updated" date in long-lived docs
+
+## Coding Standards
+
+Refer to `specchain/standards/` for detailed rules:
+
+- `global/tech-stack.md` — Technology choices and versions
+- `global/coding-style.md` — Naming, formatting, structure
+- `global/conventions.md` — Project conventions
+- `global/error-handling.md` — Error handling patterns
+- `global/validation.md` — Input validation rules
+- `frontend/` — UI component standards
+- `backend/` — API and data layer standards
+- `testing/` — Test writing standards
+
+## Project-Specific Context
+
+### Domain Terminology
+
+| Term | Definition |
+|------|-----------|
+| —    | —         |
+
+### Architectural Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| —        | —         |
+
+### External Dependencies
+
+| Dependency | Purpose | Docs |
+|------------|---------|------|
+| —          | —       | —    |

@@ -1,0 +1,46 @@
+# Implementer Roles
+# Define the specialist agents available for implementation tasks
+# Each implementer should have a matching agent file in .claude/agents/specchain/
+
+implementers:
+  - id: database-engineer
+    name: Database Engineer
+    areas_of_responsibility:
+      - Database migrations
+      - Database models and schemas
+      - Database queries and optimization
+      - Data validation
+    verified_by: backend-verifier
+
+  - id: api-engineer
+    name: API Engineer
+    areas_of_responsibility:
+      - API endpoints and controllers
+      - Request/response handling
+      - Authentication and authorization
+      - API documentation
+    verified_by: backend-verifier
+
+  - id: ui-designer
+    name: UI Designer
+    areas_of_responsibility:
+      - UI components
+      - Styling and layouts
+      - Responsive design
+      - User interactions and animations
+      - Accessibility
+    verified_by: frontend-verifier
+
+  - id: testing-engineer
+    name: Testing Engineer
+    areas_of_responsibility:
+      - Test coverage analysis
+      - Integration tests
+      - End-to-end tests
+      - Test documentation
+    verified_by: null
+
+# Add more implementers as needed for your project:
+# - id: mobile-engineer
+# - id: devops-engineer
+# - id: security-engineer

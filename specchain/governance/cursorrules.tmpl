@@ -1,0 +1,50 @@
+project: "{{PROJECT_NAME}}"
+description: "{{PROJECT_DESCRIPTION}}"
+updated: "{{DATE}}"
+
+standards:
+  - description: "Scope minimization"
+    rule: "Prefer the smallest viable change. MVP-Fix > Surgical Refactor > Systemic Change."
+
+  - description: "Behavioral contracts"
+    rule: "Assert observable behavior in tests, not implementation details."
+
+  - description: "Traceability"
+    rule: "Document non-obvious decisions with inline rationale. Link specs to requirements."
+
+  - description: "Boundary validation"
+    rule: "Validate at system boundaries (user input, external APIs). Trust internal code."
+
+  - description: "Graceful degradation"
+    rule: "No stack traces in user-facing errors. Provide fallbacks for non-critical failures."
+
+  - description: "Observability"
+    rule: "Log at operation boundaries (start, success, failure). Prefer structured logging. Include correlation IDs for cross-service operations."
+
+  - description: "Conversion architecture"
+    rule: "User-facing interfaces follow Clarity > Trust > Action. Every screen needs clear hierarchy, trust signals, and a purposeful CTA."
+
+file_layout:
+  source: "src/"
+  components: "src/components/"
+  tests: "tests/"
+  specs: "specchain/specs/"
+  standards: "specchain/standards/"
+  config: "specchain/config.yml"
+
+language: "{{LANGUAGE}}"
+framework: "{{FRAMEWORK}}"
+
+commands:
+  install: "{{CMD_INSTALL}}"
+  dev: "{{CMD_DEV}}"
+  build: "{{CMD_BUILD}}"
+  test: "{{CMD_TEST}}"
+  typecheck: "{{CMD_TYPECHECK}}"
+
+deny:
+  - "Do not commit secrets, API keys, or credentials"
+  - "Do not use any as a type annotation in TypeScript"
+  - "Do not disable linting rules without documented justification"
+  - "Do not add dependencies without checking for existing alternatives"
+  - "Do not modify generated files (migrations, lockfiles) by hand"

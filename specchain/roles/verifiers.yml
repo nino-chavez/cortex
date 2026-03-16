@@ -1,0 +1,30 @@
+# Verifier Roles
+# Define the specialist agents available for verification tasks
+# Each verifier should have a matching agent file in .claude/agents/specchain/
+
+verifiers:
+  - id: backend-verifier
+    name: Backend Verifier
+    areas_of_responsibility:
+      - Database migrations
+      - Database models and schemas
+      - API endpoints
+      - Backend business logic
+      - Authentication/authorization
+
+  - id: frontend-verifier
+    name: Frontend Verifier
+    areas_of_responsibility:
+      - UI components
+      - Styling and layouts
+      - Responsive design
+      - User interactions
+      - Accessibility
+
+  - id: implementation-verifier
+    name: Implementation Verifier
+    areas_of_responsibility:
+      - End-to-end verification
+      - Test suite execution
+      - Roadmap updates
+      - Final verification reports
