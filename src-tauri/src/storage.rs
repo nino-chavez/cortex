@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 
-const CURRENT_SCHEMA_VERSION: i32 = 3;
+const CURRENT_SCHEMA_VERSION: i32 = 4;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CaptureRow {
@@ -26,6 +26,13 @@ impl Database {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
+        }
+
+        // Load sqlite-vec extension before opening
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
         }
 
         let conn = Connection::open(path)?;
@@ -104,6 +111,31 @@ impl Database {
                 CREATE INDEX IF NOT EXISTS idx_transcriptions_start ON transcriptions(timestamp_start);
                 CREATE INDEX IF NOT EXISTS idx_transcriptions_source ON transcriptions(source);
                 CREATE VIRTUAL TABLE IF NOT EXISTS transcriptions_fts USING fts5(transcription_id, text, tokenize='unicode61');"
+            )?;
+        }
+
+        if version < 4 {
+            // Migration v4: Vector embeddings via sqlite-vec
+            let has_embed_status: bool = conn
+                .prepare("SELECT COUNT(*) FROM pragma_table_info('captures') WHERE name='embedding_status'")?
+                .query_row([], |row| row.get::<_, i64>(0))
+                .unwrap_or(0) > 0;
+
+            if !has_embed_status {
+                conn.execute_batch(
+                    "ALTER TABLE captures ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'pending';"
+                ).ok(); // ok() because column may already exist from partial migration
+            }
+
+            conn.execute_batch(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS vec_captures USING vec0(
+                    capture_id INTEGER PRIMARY KEY,
+                    embedding float[384] distance_metric=cosine
+                );
+                CREATE VIRTUAL TABLE IF NOT EXISTS vec_transcriptions USING vec0(
+                    transcription_id INTEGER PRIMARY KEY,
+                    embedding float[384] distance_metric=cosine
+                );"
             )?;
         }
 
@@ -253,6 +285,72 @@ impl Database {
         )?;
 
         Ok(id)
+    }
+
+    /// Insert a capture embedding into sqlite-vec.
+    pub fn insert_capture_embedding(&self, capture_id: i64, embedding: &[f32]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(embedding.as_ptr() as *const u8, embedding.len() * 4)
+        };
+        conn.execute(
+            "INSERT INTO vec_captures(capture_id, embedding) VALUES (?1, ?2)",
+            params![capture_id, bytes],
+        )?;
+        conn.execute(
+            "UPDATE captures SET embedding_status = 'completed' WHERE id = ?1",
+            params![capture_id],
+        )?;
+        Ok(())
+    }
+
+    /// Insert a transcription embedding into sqlite-vec.
+    pub fn insert_transcription_embedding(&self, transcription_id: i64, embedding: &[f32]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(embedding.as_ptr() as *const u8, embedding.len() * 4)
+        };
+        conn.execute(
+            "INSERT INTO vec_transcriptions(transcription_id, embedding) VALUES (?1, ?2)",
+            params![transcription_id, bytes],
+        )?;
+        Ok(())
+    }
+
+    /// Get captures pending embedding.
+    pub fn get_pending_embeddings(&self, limit: i64) -> Result<Vec<(i64, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, fts.ocr_text FROM captures c
+             JOIN captures_fts fts ON fts.capture_id = c.id
+             WHERE c.embedding_status = 'pending' AND c.ocr_status = 'completed'
+             ORDER BY c.timestamp DESC LIMIT ?1"
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |row: &rusqlite::Row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Semantic search via sqlite-vec cosine similarity.
+    pub fn semantic_search_captures(&self, query_embedding: &[f32], limit: i64) -> Result<Vec<(i64, f64)>> {
+        let conn = self.conn.lock().unwrap();
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(query_embedding.as_ptr() as *const u8, query_embedding.len() * 4)
+        };
+        let mut stmt = conn.prepare(
+            "SELECT capture_id, distance FROM vec_captures
+             WHERE embedding MATCH ?1
+             ORDER BY distance LIMIT ?2"
+        )?;
+        let rows = stmt
+            .query_map(params![bytes, limit], |row: &rusqlite::Row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     pub fn get_capture_count(&self) -> Result<i64> {

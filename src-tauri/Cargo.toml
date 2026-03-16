@@ -38,6 +38,11 @@ objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSRunningApplicat
 active-win-pos-rs = "0.10"
 block2 = "0.6"
 
+# Embeddings & vector search
+fastembed = "5"
+sqlite-vec = "0.1"
+zerocopy = { version = "0.8", features = ["derive"] }
+
 # Audio transcription
 whisper-rs = { version = "0.15", features = ["metal"] }
 hound = "3.5"

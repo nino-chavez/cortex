@@ -1,6 +1,7 @@
 mod accessibility;
 mod audio;
 mod capture;
+mod embedding;
 mod ocr;
 mod ocr_worker;
 mod permissions;
