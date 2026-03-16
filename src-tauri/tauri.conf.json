@@ -5,8 +5,8 @@
   "identifier": "app.cortex.dev",
   "build": {
     "frontendDist": "../build",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:4173",
+    "beforeDevCommand": "npm run dev -- --port 4173 --strictPort",
     "beforeBuildCommand": "npm run build"
   },
   "app": {
