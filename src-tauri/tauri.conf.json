@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Cortex",
@@ -42,9 +43,7 @@
       }
     }
   },
-  "plugins": {
-    "global-shortcut": {}
-  },
+  "plugins": {},
   "bundle": {
     "active": true,
     "targets": "all",
