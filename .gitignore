@@ -22,3 +22,6 @@ src-tauri/target/
 
 # Tauri
 src-tauri/gen/
+
+# ML model cache
+src-tauri/.fastembed_cache/
