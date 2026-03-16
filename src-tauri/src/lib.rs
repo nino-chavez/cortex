@@ -1,6 +1,7 @@
 mod accessibility;
 mod capture;
 mod ocr;
+mod ocr_worker;
 mod permissions;
 mod search;
 mod storage;
@@ -8,6 +9,7 @@ mod tray;
 
 use capture::{CaptureState, SharedCaptureState};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use storage::Database;
 
@@ -108,6 +110,10 @@ pub fn run() {
                 if !perm_status.accessibility {
                     log::warn!("Accessibility permission not granted — window titles will be 'Unknown'");
                 }
+
+                // Start OCR background worker
+                let ocr_stop = Arc::new(AtomicBool::new(false));
+                ocr_worker::start_ocr_worker(db.clone(), ocr_stop);
 
                 tray::setup_tray(app.handle(), state, db)?;
 

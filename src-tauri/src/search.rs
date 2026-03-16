@@ -112,6 +112,26 @@ impl Database {
         Ok(rows)
     }
 
+    /// Get OCR retry count for a capture.
+    pub fn get_ocr_retries(&self, capture_id: i64) -> Result<i32> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT ocr_retries FROM captures WHERE id = ?1",
+            params![capture_id],
+            |r: &rusqlite::Row| r.get(0),
+        )
+    }
+
+    /// Increment OCR retry counter.
+    pub fn increment_ocr_retries(&self, capture_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE captures SET ocr_retries = ocr_retries + 1 WHERE id = ?1",
+            params![capture_id],
+        )?;
+        Ok(())
+    }
+
     /// Get OCR status counts.
     pub fn get_ocr_status_counts(&self) -> Result<OcrStatusCounts> {
         let conn = self.conn.lock().unwrap();

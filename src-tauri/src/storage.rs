@@ -77,7 +77,8 @@ impl Database {
 
             if !has_ocr_status {
                 conn.execute_batch(
-                    "ALTER TABLE captures ADD COLUMN ocr_status TEXT NOT NULL DEFAULT 'pending';"
+                    "ALTER TABLE captures ADD COLUMN ocr_status TEXT NOT NULL DEFAULT 'pending';
+                     ALTER TABLE captures ADD COLUMN ocr_retries INTEGER NOT NULL DEFAULT 0;"
                 )?;
             }
 
