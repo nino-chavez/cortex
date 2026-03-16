@@ -353,6 +353,83 @@ impl Database {
         Ok(rows)
     }
 
+    /// Get all captures for a specific day (YYYY-MM-DD), ordered by timestamp.
+    pub fn get_captures_for_day(&self, date: &str) -> Result<Vec<CaptureRow>> {
+        let conn = self.conn.lock().unwrap();
+        let start = format!("{}T00:00:00", date);
+        let end = format!("{}T23:59:59", date);
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, app_name, bundle_id, window_title, display_id, image_path, image_hash, is_private
+             FROM captures WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![start, end], |row: &rusqlite::Row| {
+                Ok(CaptureRow {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    app_name: row.get(2)?,
+                    bundle_id: row.get(3)?,
+                    window_title: row.get(4)?,
+                    display_id: row.get(5)?,
+                    image_path: row.get(6)?,
+                    image_hash: row.get(7)?,
+                    is_private: row.get::<_, i32>(8)? != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// Get a single capture by ID.
+    pub fn get_capture_by_id(&self, id: i64) -> Result<Option<CaptureRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, app_name, bundle_id, window_title, display_id, image_path, image_hash, is_private
+             FROM captures WHERE id = ?1",
+        )?;
+        let row = stmt
+            .query_row(params![id], |row: &rusqlite::Row| {
+                Ok(CaptureRow {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    app_name: row.get(2)?,
+                    bundle_id: row.get(3)?,
+                    window_title: row.get(4)?,
+                    display_id: row.get(5)?,
+                    image_path: row.get(6)?,
+                    image_hash: row.get(7)?,
+                    is_private: row.get::<_, i32>(8)? != 0,
+                })
+            })
+            .ok();
+        Ok(row)
+    }
+
+    /// Get OCR text for a capture from FTS5 table.
+    pub fn get_capture_ocr_text(&self, capture_id: i64) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let text = conn
+            .query_row(
+                "SELECT ocr_text FROM captures_fts WHERE capture_id = ?1",
+                params![capture_id],
+                |row: &rusqlite::Row| row.get::<_, String>(0),
+            )
+            .ok();
+        Ok(text)
+    }
+
+    /// Get distinct app names from captures.
+    pub fn get_distinct_apps(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT app_name FROM captures WHERE app_name != '' ORDER BY app_name",
+        )?;
+        let rows = stmt
+            .query_map([], |row: &rusqlite::Row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn get_capture_count(&self) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.query_row("SELECT COUNT(*) FROM captures", [], |row| row.get(0))

@@ -1,6 +1,7 @@
 mod accessibility;
 mod audio;
 mod capture;
+mod chat;
 mod embedding;
 mod ocr;
 mod ocr_worker;
@@ -71,6 +72,40 @@ fn get_ocr_status(db: tauri::State<Arc<Database>>) -> search::OcrStatusCounts {
 }
 
 #[tauri::command]
+fn get_captures_for_day(db: tauri::State<Arc<Database>>, date: String) -> Vec<storage::CaptureRow> {
+    db.get_captures_for_day(&date).unwrap_or_default()
+}
+
+#[tauri::command]
+fn get_capture_by_id(db: tauri::State<Arc<Database>>, id: i64) -> Option<storage::CaptureRow> {
+    db.get_capture_by_id(id).unwrap_or(None)
+}
+
+#[tauri::command]
+fn get_capture_ocr_text(db: tauri::State<Arc<Database>>, capture_id: i64) -> Option<String> {
+    db.get_capture_ocr_text(capture_id).unwrap_or(None)
+}
+
+#[tauri::command]
+fn get_distinct_apps(db: tauri::State<Arc<Database>>) -> Vec<String> {
+    db.get_distinct_apps().unwrap_or_default()
+}
+
+#[tauri::command]
+fn chat_message(
+    db: tauri::State<Arc<Database>>,
+    engine: tauri::State<Arc<embedding::EmbeddingEngine>>,
+    message: String,
+) -> Result<chat::ChatResponse, String> {
+    chat::chat_message(&message, &db, &engine)
+}
+
+#[tauri::command]
+fn check_ollama_status() -> chat::OllamaStatus {
+    chat::check_ollama()
+}
+
+#[tauri::command]
 fn check_permissions() -> permissions::PermissionStatus {
     permissions::check_all()
 }
@@ -90,6 +125,9 @@ pub fn run() {
     let db_path = cortex_data_dir().join("cortex.db");
     let db = Arc::new(Database::open(&db_path).expect("Failed to open database"));
     let capture_state: SharedCaptureState = Arc::new(Mutex::new(CaptureState::new()));
+    let embed_engine = Arc::new(
+        embedding::EmbeddingEngine::new().expect("Failed to load embedding model"),
+    );
 
     tauri::Builder::default()
         .setup({
@@ -147,6 +185,7 @@ pub fn run() {
         })
         .manage(capture_state)
         .manage(db)
+        .manage(embed_engine)
         .invoke_handler(tauri::generate_handler![
             start_capture,
             pause_capture,
@@ -154,6 +193,12 @@ pub fn run() {
             get_recent_captures,
             search_captures,
             get_ocr_status,
+            get_captures_for_day,
+            get_capture_by_id,
+            get_capture_ocr_text,
+            get_distinct_apps,
+            chat_message,
+            check_ollama_status,
             check_permissions,
             set_capture_interval,
         ])
