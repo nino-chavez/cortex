@@ -67,15 +67,23 @@ fn compute_hash(pixels: &[u8]) -> String {
     format!("{:016x}", xxh3_64(pixels))
 }
 
-fn encode_webp(pixels: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
-    // screencapturekit provides BGRA; webp crate expects RGBA
-    let mut rgba = vec![0u8; pixels.len()];
-    for i in (0..pixels.len()).step_by(4) {
-        if i + 3 < pixels.len() {
-            rgba[i] = pixels[i + 2];     // R <- B
-            rgba[i + 1] = pixels[i + 1]; // G <- G
-            rgba[i + 2] = pixels[i];     // B <- R
-            rgba[i + 3] = pixels[i + 3]; // A <- A
+fn encode_webp(pixels: &[u8], width: u32, height: u32, bytes_per_row: usize) -> Option<Vec<u8>> {
+    // screencapturekit provides BGRA with potential row padding; webp expects tightly packed RGBA
+    let expected_row = width as usize * 4;
+    let mut rgba = vec![0u8; expected_row * height as usize];
+
+    for y in 0..height as usize {
+        let src_offset = y * bytes_per_row;
+        let dst_offset = y * expected_row;
+        for x in 0..width as usize {
+            let si = src_offset + x * 4;
+            let di = dst_offset + x * 4;
+            if si + 3 < pixels.len() && di + 3 < rgba.len() {
+                rgba[di] = pixels[si + 2];     // R <- B
+                rgba[di + 1] = pixels[si + 1]; // G <- G
+                rgba[di + 2] = pixels[si];     // B <- R
+                rgba[di + 3] = pixels[si + 3]; // A <- A
+            }
         }
     }
 
@@ -88,10 +96,11 @@ fn save_screenshot(
     pixels: &[u8],
     width: u32,
     height: u32,
+    bytes_per_row: usize,
     display_id: u32,
 ) -> Option<(PathBuf, String)> {
     let hash = compute_hash(pixels);
-    let webp_data = encode_webp(pixels, width, height)?;
+    let webp_data = encode_webp(pixels, width, height, bytes_per_row)?;
 
     let dir = screenshots_dir_for_now();
     std::fs::create_dir_all(&dir).ok()?;
@@ -112,6 +121,7 @@ fn process_frame(
     pixels: &[u8],
     width: u32,
     height: u32,
+    bytes_per_row: usize,
 ) -> bool {
     let hash = compute_hash(pixels);
 
@@ -127,7 +137,7 @@ fn process_frame(
 
     let app_info = accessibility::get_focused_app();
 
-    let (path, hash) = match save_screenshot(pixels, width, height, display_id) {
+    let (path, hash) = match save_screenshot(pixels, width, height, bytes_per_row, display_id) {
         Some(result) => result,
         None => {
             warn!("Failed to save screenshot for display {}", display_id);
@@ -238,12 +248,13 @@ pub fn start_capture_loop(state: SharedCaptureState, db: Arc<Database>) {
                 let pixels = guard.as_slice();
                 let w = guard.width() as u32;
                 let h = guard.height() as u32;
+                let bpr = guard.bytes_per_row();
 
                 if pixels.is_empty() || w == 0 || h == 0 {
                     return;
                 }
 
-                process_frame(&state_clone, &db_clone, display_id, pixels, w, h);
+                process_frame(&state_clone, &db_clone, display_id, pixels, w, h, bpr);
             },
             SCStreamOutputType::Screen,
         );
@@ -313,7 +324,7 @@ mod tests {
             255, 255, 255, 255,
         ];
 
-        let result = encode_webp(&pixels, 2, 2);
+        let result = encode_webp(&pixels, 2, 2, 8); // 2 pixels * 4 bytes = 8 bytes per row
         assert!(result.is_some());
 
         let webp_data = result.unwrap();
