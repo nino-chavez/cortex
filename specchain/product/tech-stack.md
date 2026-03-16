@@ -66,6 +66,36 @@
 | **Vite** | Frontend dev server and bundler (via SvelteKit) |
 | **Tauri CLI** | App bundling, signing, notarization |
 
+## Inspiration & References
+
+### Open Source Projects
+
+| Project | Influence | Link |
+|---|---|---|
+| **Screenpipe** | Architecture reference — validated Tauri + Rust + ScreenCaptureKit + SQLite stack for 24/7 screen capture. Their `screencapturekit-rs` crate and Vision OCR bridging patterns were directly referenced. | [github.com/screenpipe/screenpipe](https://github.com/screenpipe/screenpipe) |
+| **OpenRewind** | Community Rewind.ai clone — studied their approach to local-first screen indexing and timeline UI patterns. | [github.com/nicokimmel/open-rewind](https://github.com/nicokimmel/open-rewind) |
+
+### Commercial Products (Studied for UX Patterns)
+
+| Product | What We Learned |
+|---|---|
+| **Rewind.ai** | Pioneered the "searchable screen history" concept. We studied their UX for timeline scrubbing and keyword search. Cortex differentiates by being 100% local with zero cloud dependency. |
+| **Limitless (formerly Rewind)** | Meeting memory and AI summarization patterns. Informed our Meeting Memory spec (#8). |
+| **Raycast** | The gold standard for macOS floating search overlays. Our Search UI (Cmd+Shift+Space) directly follows their interaction model. |
+
+### Key Crates & Tools
+
+| Tool | How We Used It |
+|---|---|
+| **screencapturekit** (Rust) | Core screen capture — ScreenCaptureKit bindings by svtlabs |
+| **swift-rs** | FFI bridge for Apple Vision OCR (VNRecognizeTextRequest) |
+| **whisper-rs** | whisper.cpp Rust bindings with Metal acceleration for audio transcription |
+| **fastembed** | all-MiniLM-L6-v2 sentence embeddings via ONNX Runtime — chosen over candle for stability and simplicity |
+| **sqlite-vec** | Vector similarity search as a SQLite extension — keeps everything in one database file |
+| **rusqlite** | SQLite driver with bundled FTS5 for full-text search |
+| **Ollama** | Local LLM inference server for RAG chat — avoids bundling model weights in the binary |
+| **Tauri v2** | Desktop app framework — native WebView, system tray, global shortcuts |
+
 ## Key Crates (Rust)
 
 - `tauri` — Desktop app framework
