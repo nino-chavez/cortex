@@ -58,11 +58,21 @@
 		}
 	}
 
-	// Downsample to ~1 per minute for filmstrip
+	let zoomLevel = $state(1); // 1 = 1/min, 2 = 1/30s, 3 = all (5s)
+
+	// Smart downsampling based on zoom level
 	let filmstripCaptures = $derived.by(() => {
-		if (captures.length <= 60) return captures;
-		const interval = Math.ceil(captures.length / (captures.length / 12));
-		return captures.filter((_, i) => i % interval === 0 || i === captures.length - 1);
+		if (captures.length === 0) return [];
+
+		if (zoomLevel >= 3 || captures.length <= 60) return captures;
+
+		// Calculate target count based on zoom
+		const targetPerMinute = zoomLevel === 1 ? 1 : 2; // 1/min or 2/min
+		const totalMinutes = Math.max(1, Math.ceil(captures.length / 12)); // ~12 captures per min at 5s
+		const targetCount = totalMinutes * targetPerMinute;
+		const step = Math.max(1, Math.floor(captures.length / targetCount));
+
+		return captures.filter((_, i) => i % step === 0 || i === captures.length - 1);
 	});
 </script>
 
@@ -86,7 +96,22 @@
 			>
 				Jump to Now
 			</button>
-			<span class="text-sm text-[#525252]">{captures.length} captures</span>
+			<div class="flex items-center gap-1 rounded-md border border-[#262626] bg-[#141414] px-1">
+				<button
+					onclick={() => (zoomLevel = Math.max(1, zoomLevel - 1))}
+					class="px-1.5 py-0.5 text-sm text-[#525252] hover:text-[#FAFAFA]"
+					disabled={zoomLevel <= 1}
+				>-</button>
+				<span class="px-1 text-xs text-[#A3A3A3]">
+					{zoomLevel === 1 ? '1/min' : zoomLevel === 2 ? '1/30s' : 'All'}
+				</span>
+				<button
+					onclick={() => (zoomLevel = Math.min(3, zoomLevel + 1))}
+					class="px-1.5 py-0.5 text-sm text-[#525252] hover:text-[#FAFAFA]"
+					disabled={zoomLevel >= 3}
+				>+</button>
+			</div>
+			<span class="text-sm text-[#525252]">{filmstripCaptures.length}/{captures.length}</span>
 		</div>
 	</div>
 

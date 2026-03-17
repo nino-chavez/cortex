@@ -1,6 +1,6 @@
 use crate::embedding::EmbeddingEngine;
 use crate::storage::Database;
-use log::{error, info, warn};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
