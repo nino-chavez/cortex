@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use storage::Database;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn cortex_data_dir() -> PathBuf {
     dirs::home_dir()
@@ -125,6 +125,18 @@ fn end_meeting(
 #[tauri::command]
 fn list_meetings(db: tauri::State<Arc<Database>>, limit: i64) -> Vec<meeting::MeetingRow> {
     db.list_meetings(limit).unwrap_or_default()
+}
+
+#[tauri::command]
+fn chat_message_stream(
+    app: tauri::AppHandle,
+    db: tauri::State<Arc<Database>>,
+    engine: tauri::State<Arc<embedding::EmbeddingEngine>>,
+    message: String,
+) -> Result<chat::ChatResponse, String> {
+    chat::chat_message_streaming(&message, &db, &engine, |token| {
+        app.emit("chat-token", token).ok();
+    })
 }
 
 #[tauri::command]
@@ -303,6 +315,7 @@ pub fn run() {
             get_capture_ocr_text,
             get_distinct_apps,
             chat_message,
+            chat_message_stream,
             check_ollama_status,
             start_meeting,
             end_meeting,

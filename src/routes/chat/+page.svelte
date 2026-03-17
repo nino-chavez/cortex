@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
 
 	interface Citation {
 		capture_id: number;
@@ -17,6 +18,7 @@
 		role: 'user' | 'assistant';
 		text: string;
 		citations?: Citation[];
+		streaming?: boolean;
 	}
 
 	let messages = $state<Message[]>([]);
@@ -32,23 +34,40 @@
 		input = '';
 		loading = true;
 
+		// Add empty streaming message
+		const streamMsg: Message = { role: 'assistant', text: '', streaming: true };
+		messages.push(streamMsg);
+		const msgIdx = messages.length - 1;
+
+		// Listen for streaming tokens
+		const unlisten = await listen<string>('chat-token', (event) => {
+			messages[msgIdx].text += event.payload;
+			scrollToBottom();
+		});
+
 		try {
-			const response = await invoke<ChatResponse>('chat_message', { message: query });
-			messages.push({
+			const response = await invoke<ChatResponse>('chat_message_stream', { message: query });
+			// Replace streaming message with final response
+			messages[msgIdx] = {
 				role: 'assistant',
 				text: response.text,
-				citations: response.citations
-			});
+				citations: response.citations,
+				streaming: false
+			};
 		} catch (e) {
-			messages.push({
+			messages[msgIdx] = {
 				role: 'assistant',
-				text: `Error: ${e}. Make sure Ollama is running with \`ollama serve\` and you've pulled llama3.1 with \`ollama pull llama3.1\`.`
-			});
+				text: `Error: ${e}. Make sure Ollama is running with \`ollama serve\` and you've pulled llama3.1 with \`ollama pull llama3.1\`.`,
+				streaming: false
+			};
 		} finally {
+			unlisten();
 			loading = false;
+			scrollToBottom();
 		}
+	}
 
-		// Scroll to bottom
+	function scrollToBottom() {
 		requestAnimationFrame(() => {
 			messagesEl?.scrollTo({ top: messagesEl.scrollHeight, behavior: 'smooth' });
 		});
@@ -103,7 +122,7 @@
 							? 'bg-blue-600 text-white'
 							: 'bg-[#141414] text-[#D4D4D4]'}"
 					>
-						<p class="whitespace-pre-wrap">{msg.text}</p>
+						<p class="whitespace-pre-wrap">{msg.text}{#if msg.streaming}<span class="animate-pulse">|</span>{/if}</p>
 
 						{#if msg.citations && msg.citations.length > 0}
 							<div class="mt-3 flex flex-wrap gap-1.5 border-t border-[#262626] pt-2">
@@ -120,14 +139,6 @@
 					</div>
 				</div>
 			{/each}
-
-			{#if loading}
-				<div class="mb-4">
-					<div class="inline-block rounded-xl bg-[#141414] px-4 py-3 text-sm text-[#525252]">
-						Thinking...
-					</div>
-				</div>
-			{/if}
 		{/if}
 	</div>
 
@@ -147,7 +158,7 @@
 				disabled={loading || !input.trim()}
 				class="rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
 			>
-				Send
+				{loading ? 'Thinking...' : 'Send'}
 			</button>
 		</div>
 	</div>

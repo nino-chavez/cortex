@@ -1,6 +1,7 @@
 use crate::embedding::EmbeddingEngine;
 use crate::storage::Database;
-use log::{error, info};
+use log::info;
+use std::io::BufRead;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -191,6 +192,99 @@ pub fn chat_message(
 
     Ok(ChatResponse {
         text: ollama_resp.response,
+        citations,
+    })
+}
+
+/// Streaming RAG pipeline: same as chat_message but emits tokens via a callback.
+pub fn chat_message_streaming<F>(
+    query: &str,
+    db: &Database,
+    engine: &EmbeddingEngine,
+    on_token: F,
+) -> Result<ChatResponse, String>
+where
+    F: Fn(&str),
+{
+    let query_embedding = engine
+        .embed_text(query)
+        .ok_or("Failed to embed query")?;
+
+    let search_results = db
+        .semantic_search_captures(&query_embedding, TOP_K_CONTEXT as i64)
+        .map_err(|e| format!("Search failed: {}", e))?;
+
+    let mut citations = Vec::new();
+    for (capture_id, _distance) in &search_results {
+        if let Ok(Some(capture)) = db.get_capture_by_id(*capture_id) {
+            let ocr_text = db
+                .get_capture_ocr_text(*capture_id)
+                .unwrap_or(None)
+                .unwrap_or_default();
+
+            citations.push(Citation {
+                capture_id: *capture_id,
+                timestamp: capture.timestamp.clone(),
+                app_name: capture.app_name.clone(),
+                snippet: ocr_text.chars().take(500).collect(),
+            });
+        }
+    }
+
+    let prompt = build_rag_prompt(query, &citations);
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    #[derive(Serialize)]
+    struct Req {
+        model: String,
+        prompt: String,
+        stream: bool,
+    }
+
+    let response = client
+        .post(format!("{}/api/generate", OLLAMA_BASE_URL))
+        .json(&Req {
+            model: DEFAULT_MODEL.to_string(),
+            prompt,
+            stream: true,
+        })
+        .send()
+        .map_err(|e| format!("Ollama request failed: {}", e))?;
+
+    let mut full_text = String::new();
+    let reader = std::io::BufReader::new(response);
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("Stream read error: {}", e))?;
+        if line.is_empty() {
+            continue;
+        }
+
+        #[derive(Deserialize)]
+        struct StreamChunk {
+            response: String,
+            done: bool,
+        }
+
+        if let Ok(chunk) = serde_json::from_str::<StreamChunk>(&line) {
+            if !chunk.response.is_empty() {
+                on_token(&chunk.response);
+                full_text.push_str(&chunk.response);
+            }
+            if chunk.done {
+                break;
+            }
+        }
+    }
+
+    info!("Streaming chat complete with {} citations", citations.len());
+
+    Ok(ChatResponse {
+        text: full_text,
         citations,
     })
 }
